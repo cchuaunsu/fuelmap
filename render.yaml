@@ -1,5 +1,10 @@
-# Render blueprint — deploys the Fuel Intelligence Engine + map frontend
+# Render blueprint — deploys LITRO (the Metro Manila pump-price index)
 # as one password-protected web service on the free plan.
+#
+# The service name below sets the public URL: name "litro" serves at
+# https://litro.onrender.com. onrender.com subdomains are globally
+# unique, so if "litro" is already taken this deploy will fail — pick
+# an available name (e.g. litro-ph) and it becomes <name>.onrender.com.
 #
 # At deploy time Render asks you to fill in the two secret values:
 # - FIE_ACCESS_PASSWORD: the password the site asks for (you choose it)
@@ -12,7 +17,7 @@
 #   (roughly a minute), after which it is instant.
 services:
   - type: web
-    name: fuel-prices-ncr
+    name: litro
     runtime: docker
     plan: free
     healthCheckPath: /api/v1/health

@@ -69,12 +69,16 @@ const map = L.map("map", {
 // tiles for night driving; the choice is remembered.
 const TILE_ATTR =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
-// Positron: a near-monochrome basemap — the brand is ink on paper, so
-// the only chroma on the map is the data itself (brand dots, pills).
+// Voyager: a muted but fully cartographic basemap. It reads as a real
+// map — streets drawn and named legibly — while staying desaturated
+// enough that the only strong chroma is the data (brand dots, pills).
+// Positron was too washed out to navigate by; the labels vanished.
 const tileLight = L.tileLayer(
-  "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+  "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
   { maxZoom: 19, subdomains: "abcd", attribution: TILE_ATTR }
 );
+// Dark Matter for night driving — its street labels sit brighter than
+// the ground, so names stay readable.
 const tileDark = L.tileLayer(
   "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
   { maxZoom: 19, subdomains: "abcd", attribution: TILE_ATTR }
