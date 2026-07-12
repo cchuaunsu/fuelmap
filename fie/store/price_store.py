@@ -102,6 +102,101 @@ _POSTGRES_SCHEMA = _TABLES.format(
     REAL="DOUBLE PRECISION", AUTOID="BIGSERIAL PRIMARY KEY"
 )
 
+# Statements for the batched write paths. A refresh touches thousands of
+# rows; against a remote Postgres a round trip per row turns the store
+# stage into minutes, so every write path collects its parameters first
+# and runs one executemany per statement. Placeholders are `?`, translated
+# per backend by VerifiedPriceStore._q.
+
+_SELECT_PRIOR = (
+    "SELECT station_id, fuel_type, status, evidence_timestamp "
+    "FROM verified_prices"
+)
+
+_TOUCH_REFRESH = (
+    "UPDATE verified_prices SET last_refresh_at=?, last_refresh_run_id=? "
+    "WHERE station_id=? AND fuel_type=?"
+)
+
+_UPSERT_VERIFIED = """
+    INSERT INTO verified_prices (
+        station_id, fuel_type, status, price, currency,
+        confidence_level, confidence_score, source_name,
+        source_url, source_type, evidence_timestamp,
+        verified_at, last_refresh_at, last_refresh_run_id,
+        unavailable_reason
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')
+    ON CONFLICT (station_id, fuel_type) DO UPDATE SET
+        status=excluded.status,
+        price=excluded.price,
+        currency=excluded.currency,
+        confidence_level=excluded.confidence_level,
+        confidence_score=excluded.confidence_score,
+        source_name=excluded.source_name,
+        source_url=excluded.source_url,
+        source_type=excluded.source_type,
+        evidence_timestamp=excluded.evidence_timestamp,
+        verified_at=excluded.verified_at,
+        last_refresh_at=excluded.last_refresh_at,
+        last_refresh_run_id=excluded.last_refresh_run_id,
+        unavailable_reason='',
+        derived_price=NULL,
+        derived_confidence_score=NULL,
+        derived_confidence_level=NULL,
+        derivation_note='',
+        derived_at=NULL
+"""
+
+_INSERT_HISTORY = """
+    INSERT INTO price_history (
+        station_id, fuel_type, price, confidence_level,
+        confidence_score, source_name, source_url,
+        verified_at, run_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+_MARK_STALE = (
+    "UPDATE verified_prices SET status=?, last_refresh_at=?, "
+    "last_refresh_run_id=?, unavailable_reason=?, "
+    "derived_price=NULL, derived_confidence_score=NULL, "
+    "derived_confidence_level=NULL, derivation_note='', "
+    "derived_at=NULL "
+    "WHERE station_id=? AND fuel_type=?"
+)
+
+_UPSERT_UNAVAILABLE = """
+    INSERT INTO verified_prices (
+        station_id, fuel_type, status, price, currency,
+        confidence_level, confidence_score, source_name,
+        source_url, source_type, evidence_timestamp, verified_at,
+        last_refresh_at, last_refresh_run_id, unavailable_reason
+    ) VALUES (?, ?, ?, NULL, 'PHP', ?, 0, NULL, NULL, NULL, NULL,
+              NULL, ?, ?, ?)
+    ON CONFLICT (station_id, fuel_type) DO UPDATE SET
+        last_refresh_at=excluded.last_refresh_at,
+        last_refresh_run_id=excluded.last_refresh_run_id,
+        unavailable_reason=excluded.unavailable_reason
+"""
+
+_UPDATE_DERIVATION = (
+    "UPDATE verified_prices SET derived_price=?, "
+    "derived_confidence_score=?, derived_confidence_level=?, "
+    "derivation_note=?, derived_at=?, last_refresh_run_id=? "
+    "WHERE station_id=? AND fuel_type=? AND status=?"
+)
+
+_UPSERT_RELIABILITY = """
+    INSERT INTO provider_reliability (
+        provider_name, agreements, disagreements,
+        errors, updated_at
+    ) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT (provider_name) DO UPDATE SET
+        agreements = agreements + excluded.agreements,
+        disagreements = disagreements + excluded.disagreements,
+        errors = errors + excluded.errors,
+        updated_at = excluded.updated_at
+"""
+
 
 @dataclass(frozen=True)
 class StoredPrice:
@@ -181,13 +276,43 @@ class VerifiedPriceStore:
 
         Returns {"station_id:fuel_type": action} where action is one of
         'verified', 'kept_newer_existing', 'marked_stale', 'unavailable'.
+
+        Prior state is read with one bulk SELECT and each action group is
+        written with one executemany, so the round-trip count stays flat
+        no matter how many rows the refresh produced.
         """
+        if not results:
+            return {}
         now = datetime.now(timezone.utc).isoformat()
         actions: dict[str, str] = {}
+        buckets: dict[str, list[tuple]] = {
+            "touch": [], "verified": [], "history": [],
+            "stale": [], "unavailable": [],
+        }
         with self._lock, self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute(_SELECT_PRIOR)
+            prior = {
+                (row["station_id"], row["fuel_type"]):
+                    (row["status"], row["evidence_timestamp"])
+                for row in cur.fetchall()
+            }
             for resolved in results:
-                action = self._apply_one(conn, resolved, run_id, now)
-                actions[f"{resolved.station_id}:{resolved.fuel_type.value}"] = action
+                key = (resolved.station_id, resolved.fuel_type.value)
+                actions[f"{key[0]}:{key[1]}"] = self._bucket_one(
+                    resolved, prior.get(key), run_id, now, buckets
+                )
+            # Each resolution lands in exactly one verified_prices bucket,
+            # so statement order between buckets cannot matter.
+            for name, sql in (
+                ("touch", _TOUCH_REFRESH),
+                ("verified", _UPSERT_VERIFIED),
+                ("history", _INSERT_HISTORY),
+                ("stale", _MARK_STALE),
+                ("unavailable", _UPSERT_UNAVAILABLE),
+            ):
+                if buckets[name]:
+                    cur.executemany(self._q(sql), buckets[name])
         return actions
 
     def apply_resolution(self, resolved: ResolvedPrice, run_id: str) -> str:
@@ -195,108 +320,45 @@ class VerifiedPriceStore:
             f"{resolved.station_id}:{resolved.fuel_type.value}"
         ]
 
-    def _apply_one(self, conn, resolved: ResolvedPrice, run_id: str, now: str) -> str:
-        existing = conn.execute(
-            self._q(
-                "SELECT status, evidence_timestamp FROM verified_prices "
-                "WHERE station_id=? AND fuel_type=?"
-            ),
-            (resolved.station_id, resolved.fuel_type.value),
-        ).fetchone()
-        has_prior_truth = existing is not None and existing["status"] in (
+    @staticmethod
+    def _bucket_one(
+        resolved: ResolvedPrice,
+        prior: tuple[str, str | None] | None,
+        run_id: str,
+        now: str,
+        buckets: dict[str, list[tuple]],
+    ) -> str:
+        """Classify one resolution and queue its statement parameters."""
+        station, fuel = resolved.station_id, resolved.fuel_type.value
+        has_prior_truth = prior is not None and prior[0] in (
             StoreStatus.VERIFIED.value,
             StoreStatus.STALE_VERIFIED.value,
         )
 
         if resolved.status == ResolutionStatus.VERIFIED:
             assert resolved.evidence_timestamp is not None
-            if (
-                has_prior_truth
-                and existing["evidence_timestamp"] is not None
-                and existing["evidence_timestamp"]
-                > resolved.evidence_timestamp.isoformat()
-            ):
+            evidence_ts = resolved.evidence_timestamp.isoformat()
+            if has_prior_truth and prior[1] is not None and prior[1] > evidence_ts:
                 # Stale-data protection: the stored price rests on newer
                 # evidence than this refresh produced. Keep it.
-                conn.execute(
-                    self._q(
-                        "UPDATE verified_prices SET last_refresh_at=?, "
-                        "last_refresh_run_id=? WHERE station_id=? AND fuel_type=?"
-                    ),
-                    (now, run_id, resolved.station_id, resolved.fuel_type.value),
-                )
+                buckets["touch"].append((now, run_id, station, fuel))
                 return "kept_newer_existing"
 
-            conn.execute(
-                self._q(
-                    """
-                    INSERT INTO verified_prices (
-                        station_id, fuel_type, status, price, currency,
-                        confidence_level, confidence_score, source_name,
-                        source_url, source_type, evidence_timestamp,
-                        verified_at, last_refresh_at, last_refresh_run_id,
-                        unavailable_reason
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')
-                    ON CONFLICT (station_id, fuel_type) DO UPDATE SET
-                        status=excluded.status,
-                        price=excluded.price,
-                        currency=excluded.currency,
-                        confidence_level=excluded.confidence_level,
-                        confidence_score=excluded.confidence_score,
-                        source_name=excluded.source_name,
-                        source_url=excluded.source_url,
-                        source_type=excluded.source_type,
-                        evidence_timestamp=excluded.evidence_timestamp,
-                        verified_at=excluded.verified_at,
-                        last_refresh_at=excluded.last_refresh_at,
-                        last_refresh_run_id=excluded.last_refresh_run_id,
-                        unavailable_reason='',
-                        derived_price=NULL,
-                        derived_confidence_score=NULL,
-                        derived_confidence_level=NULL,
-                        derivation_note='',
-                        derived_at=NULL
-                    """
-                ),
-                (
-                    resolved.station_id,
-                    resolved.fuel_type.value,
-                    StoreStatus.VERIFIED.value,
-                    resolved.price,
-                    resolved.currency,
-                    resolved.confidence_level.value,
-                    resolved.confidence_score,
-                    resolved.source_name,
-                    resolved.source_url,
-                    resolved.source_type,
-                    resolved.evidence_timestamp.isoformat(),
-                    resolved.verified_at.isoformat() if resolved.verified_at else now,
-                    now,
-                    run_id,
-                ),
+            verified_at = (
+                resolved.verified_at.isoformat() if resolved.verified_at else now
             )
-            conn.execute(
-                self._q(
-                    """
-                    INSERT INTO price_history (
-                        station_id, fuel_type, price, confidence_level,
-                        confidence_score, source_name, source_url,
-                        verified_at, run_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                ),
-                (
-                    resolved.station_id,
-                    resolved.fuel_type.value,
-                    resolved.price,
-                    resolved.confidence_level.value,
-                    resolved.confidence_score,
-                    resolved.source_name,
-                    resolved.source_url,
-                    resolved.verified_at.isoformat() if resolved.verified_at else now,
-                    run_id,
-                ),
-            )
+            buckets["verified"].append((
+                station, fuel, StoreStatus.VERIFIED.value,
+                resolved.price, resolved.currency,
+                resolved.confidence_level.value, resolved.confidence_score,
+                resolved.source_name, resolved.source_url,
+                resolved.source_type, evidence_ts, verified_at, now, run_id,
+            ))
+            buckets["history"].append((
+                station, fuel, resolved.price,
+                resolved.confidence_level.value, resolved.confidence_score,
+                resolved.source_name, resolved.source_url, verified_at, run_id,
+            ))
             return "verified"
 
         # UNAVAILABLE outcome
@@ -304,52 +366,16 @@ class VerifiedPriceStore:
             # Keep the previous verified value as Last Successfully
             # Verified. Derivation overlays are cleared here and rebuilt
             # from the baseline by the Derivation Engine.
-            conn.execute(
-                self._q(
-                    "UPDATE verified_prices SET status=?, last_refresh_at=?, "
-                    "last_refresh_run_id=?, unavailable_reason=?, "
-                    "derived_price=NULL, derived_confidence_score=NULL, "
-                    "derived_confidence_level=NULL, derivation_note='', "
-                    "derived_at=NULL "
-                    "WHERE station_id=? AND fuel_type=?"
-                ),
-                (
-                    StoreStatus.STALE_VERIFIED.value,
-                    now,
-                    run_id,
-                    resolved.reason,
-                    resolved.station_id,
-                    resolved.fuel_type.value,
-                ),
-            )
+            buckets["stale"].append((
+                StoreStatus.STALE_VERIFIED.value, now, run_id,
+                resolved.reason, station, fuel,
+            ))
             return "marked_stale"
 
-        conn.execute(
-            self._q(
-                """
-                INSERT INTO verified_prices (
-                    station_id, fuel_type, status, price, currency,
-                    confidence_level, confidence_score, source_name,
-                    source_url, source_type, evidence_timestamp, verified_at,
-                    last_refresh_at, last_refresh_run_id, unavailable_reason
-                ) VALUES (?, ?, ?, NULL, 'PHP', ?, 0, NULL, NULL, NULL, NULL,
-                          NULL, ?, ?, ?)
-                ON CONFLICT (station_id, fuel_type) DO UPDATE SET
-                    last_refresh_at=excluded.last_refresh_at,
-                    last_refresh_run_id=excluded.last_refresh_run_id,
-                    unavailable_reason=excluded.unavailable_reason
-                """
-            ),
-            (
-                resolved.station_id,
-                resolved.fuel_type.value,
-                StoreStatus.UNAVAILABLE.value,
-                resolved.confidence_level.value,
-                now,
-                run_id,
-                resolved.reason,
-            ),
-        )
+        buckets["unavailable"].append((
+            station, fuel, StoreStatus.UNAVAILABLE.value,
+            resolved.confidence_level.value, now, run_id, resolved.reason,
+        ))
         return "unavailable"
 
     # ---- derivation overlay ---------------------------------------------
@@ -369,27 +395,16 @@ class VerifiedPriceStore:
         if not derivations:
             return
         now = datetime.now(timezone.utc).isoformat()
+        rows = [
+            (
+                d.price, d.confidence_score, d.confidence_level_value,
+                d.note, now, run_id, d.station_id, d.fuel_type,
+                StoreStatus.STALE_VERIFIED.value,
+            )
+            for d in derivations
+        ]
         with self._lock, self._connect() as conn:
-            for d in derivations:
-                conn.execute(
-                    self._q(
-                        "UPDATE verified_prices SET derived_price=?, "
-                        "derived_confidence_score=?, derived_confidence_level=?, "
-                        "derivation_note=?, derived_at=?, last_refresh_run_id=? "
-                        "WHERE station_id=? AND fuel_type=? AND status=?"
-                    ),
-                    (
-                        d.price,
-                        d.confidence_score,
-                        d.confidence_level_value,
-                        d.note,
-                        now,
-                        run_id,
-                        d.station_id,
-                        d.fuel_type,
-                        StoreStatus.STALE_VERIFIED.value,
-                    ),
-                )
+            conn.cursor().executemany(self._q(_UPDATE_DERIVATION), rows)
 
     # ---- adjustment ledger ----------------------------------------------
 
@@ -452,6 +467,15 @@ class VerifiedPriceStore:
         return out
 
     # ---- reading ---------------------------------------------------------
+
+    def summary(self) -> dict:
+        """Cheap store overview for /status probes: one query, no rows."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n, MAX(last_refresh_at) AS latest "
+                "FROM verified_prices"
+            ).fetchone()
+        return {"prices_stored": row["n"], "last_refresh": row["latest"]}
 
     def get_all(self) -> list[StoredPrice]:
         with self._connect() as conn:
@@ -527,27 +551,15 @@ class VerifiedPriceStore:
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         providers = set(agreements) | set(disagreements) | set(errors)
+        rows = [
+            (
+                provider,
+                agreements.get(provider, 0),
+                disagreements.get(provider, 0),
+                errors.get(provider, 0),
+                now,
+            )
+            for provider in sorted(providers)
+        ]
         with self._lock, self._connect() as conn:
-            for provider in providers:
-                conn.execute(
-                    self._q(
-                        """
-                        INSERT INTO provider_reliability (
-                            provider_name, agreements, disagreements,
-                            errors, updated_at
-                        ) VALUES (?, ?, ?, ?, ?)
-                        ON CONFLICT (provider_name) DO UPDATE SET
-                            agreements = agreements + excluded.agreements,
-                            disagreements = disagreements + excluded.disagreements,
-                            errors = errors + excluded.errors,
-                            updated_at = excluded.updated_at
-                        """
-                    ),
-                    (
-                        provider,
-                        agreements.get(provider, 0),
-                        disagreements.get(provider, 0),
-                        errors.get(provider, 0),
-                        now,
-                    ),
-                )
+            conn.cursor().executemany(self._q(_UPSERT_RELIABILITY), rows)

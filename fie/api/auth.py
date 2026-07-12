@@ -13,7 +13,7 @@ from __future__ import annotations
 import base64
 import secrets
 
-_OPEN_PATHS = {"/api/v1/health"}
+_OPEN_PATHS = {"/api/v1/health", "/api/v1/status"}
 
 
 class PasswordGate:

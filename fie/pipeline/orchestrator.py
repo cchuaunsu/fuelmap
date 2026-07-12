@@ -9,6 +9,7 @@ stage lives in its own engine and is independently replaceable.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -85,10 +86,15 @@ class RefreshOrchestrator:
             wanted = set(station_ids)
             stations = [s for s in stations if s.station_id in wanted]
 
+        # Store calls are synchronous; against a remote Postgres they take
+        # real wall-clock time, so every one of them runs in a worker
+        # thread to keep the event loop (and /health) responsive.
         ctx = RefreshContext(
             settings=self._settings,
             developer_mode=developer_mode and self._settings.developer_mode_enabled,
-            provider_reliability=self._store.get_provider_reliability(),
+            provider_reliability=await asyncio.to_thread(
+                self._store.get_provider_reliability
+            ),
         )
         log.info(
             "Refresh %s started for %d stations", ctx.run_id, len(stations)
@@ -118,7 +124,9 @@ class RefreshOrchestrator:
             for provider in self._adjustment_providers:
                 try:
                     found = await provider.fetch_adjustments(ctx)
-                    adjustments_recorded += self._store.record_adjustments(found)
+                    adjustments_recorded += await asyncio.to_thread(
+                        self._store.record_adjustments, found
+                    )
                 except Exception:
                     log.exception(
                         "Adjustment provider %s failed", provider.name
@@ -147,7 +155,7 @@ class RefreshOrchestrator:
         # Build the official adjustment-record view from pre-refresh store
         # state: last verified prices + announced deltas predict what each
         # price should be today.
-        ctx.ledger_view = self._build_ledger_view(stations)
+        ctx.ledger_view = await asyncio.to_thread(self._build_ledger_view, stations)
 
         # 6 & 7. Confidence + conflict resolution per (station, fuel).
         results: list[ResolvedPrice] = []
@@ -179,16 +187,22 @@ class RefreshOrchestrator:
 
         # 8. Store — with stale-data protection, one transaction.
         with ctx.trace.stage("store"):
-            store_actions = self._store.apply_resolutions(results, ctx.run_id)
+            store_actions = await asyncio.to_thread(
+                self._store.apply_resolutions, results, ctx.run_id
+            )
 
         # 9. Derivation — advance stale baselines with the official
         # adjustment ledger (clearly labeled DERIVED, never verified).
         derived_count = 0
         if self._derivation is not None:
             with ctx.trace.stage("derivation"):
-                derived_count = self._derivation.derive_stale(ctx)
+                derived_count = await asyncio.to_thread(
+                    self._derivation.derive_stale, ctx
+                )
 
-        self._update_provider_reliability(matching.matched, results, collection)
+        await asyncio.to_thread(
+            self._update_provider_reliability, matching.matched, results, collection
+        )
 
         finished_at = datetime.now(timezone.utc)
         verified_count = sum(

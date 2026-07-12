@@ -7,6 +7,7 @@ import time
 
 from fastapi import APIRouter, HTTPException, Request
 
+from fie import __version__
 from fie.api.schemas import (
     PRICE_UNAVAILABLE,
     RefreshRequest,
@@ -19,7 +20,10 @@ from fie.container import EngineContainer
 from fie.models.enums import ResolutionStatus, StoreStatus
 from fie.models.station import Station
 from fie.models.verification import ResolvedPrice
+from fie.observability import get_logger
 from fie.store.price_store import StoredPrice
+
+log = get_logger("api")
 
 router = APIRouter(prefix="/api/v1")
 
@@ -125,6 +129,19 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@router.get("/status")
+async def status(request: Request) -> dict:
+    """Deploy/diagnostics probe: which build is live and is the store
+    populated. Open (no password) like /health; exposes only counts."""
+    summary = await asyncio.to_thread(_container(request).store.summary)
+    return {
+        "status": "ok",
+        "version": __version__,
+        "refresh_running": _refresh_lock.locked(),
+        **summary,
+    }
+
+
 @router.get("/stations", response_model=list[StationOut])
 def list_stations(request: Request) -> list[StationOut]:
     container = _container(request)
@@ -167,6 +184,31 @@ def list_prices(request: Request) -> list[VerifiedPriceOut]:
 # serialized (one at a time) and rate-limited regardless of who asks.
 _refresh_lock = asyncio.Lock()
 _last_refresh_started: float = 0.0
+
+
+async def bootstrap_store_if_empty(container: EngineContainer) -> None:
+    """Self-heal an empty store with one refresh, off the startup path.
+
+    A first deployment (or a wiped database) otherwise serves an empty map
+    until a person clicks Refresh and keeps the tab open. Uses the same
+    lock and cooldown stamp as the endpoint so the two can never overlap.
+    """
+    global _last_refresh_started
+    try:
+        summary = await asyncio.to_thread(container.store.summary)
+        if summary["prices_stored"] or _refresh_lock.locked():
+            return
+        async with _refresh_lock:
+            _last_refresh_started = time.monotonic()
+            log.info("Store is empty — running bootstrap refresh")
+            report = await container.orchestrator.refresh()
+            log.info(
+                "Bootstrap refresh %s done: %d verified",
+                report.run_id, report.stats.get("verified", 0),
+            )
+    except Exception:
+        log.exception("Bootstrap refresh failed; the map stays empty "
+                      "until a manual refresh succeeds")
 
 
 @router.post("/refresh", response_model=RefreshResponse)
