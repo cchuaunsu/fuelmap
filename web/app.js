@@ -1,5 +1,6 @@
-/* Fuel Prices — NCR map frontend.
- * A thin consumer of the Fuel Intelligence Engine REST API: it renders
+/* LITRO — the Metro Manila pump-price index.
+ * The product is the number (₱ per litro); the map is one view of it.
+ * A thin consumer of the verification engine's REST API: it renders
  * whatever the engine verified and never invents a price. */
 
 "use strict";
@@ -19,12 +20,19 @@ const FUELS = [
 ];
 const FUEL_LABELS = Object.fromEntries(FUELS.map((f) => [f.id, f.label]));
 
+// Brand colors appear only as 8px data dots (brand standards: Litro
+// itself has no color — the only chroma in the system is the data's).
 const BRAND_COLORS = {
-  shell: "#e8b400", petron: "#1c56a4", caltex: "#00843d",
-  seaoil: "#0a9e4e", unioil: "#f26f21", cleanfuel: "#0098d8",
+  shell: "#EFB700", petron: "#0050A0", caltex: "#D52B1E",
+  seaoil: "#0a9e4e", unioil: "#F58220", cleanfuel: "#0098d8",
   phoenix: "#e4572e", flying_v: "#c2262e", total: "#e2001a",
-  jetti: "#7a3fb3", ptt: "#00539f", unknown: "#64748b",
+  jetti: "#7a3fb3", ptt: "#00539f", unknown: "#8A8981",
 };
+
+// Every price is mono, two decimals, with a de-emphasized peso sign.
+function pesoHTML(value) {
+  return `<span class="cur">₱</span>${value.toFixed(2)}`;
+}
 
 // How many full price pills may appear, by zoom. Everything else in view
 // renders as a small dot (hover for price, click to expand).
@@ -61,8 +69,10 @@ const map = L.map("map", {
 // tiles for night driving; the choice is remembered.
 const TILE_ATTR =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
+// Positron: a near-monochrome basemap — the brand is ink on paper, so
+// the only chroma on the map is the data itself (brand dots, pills).
 const tileLight = L.tileLayer(
-  "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+  "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
   { maxZoom: 19, subdomains: "abcd", attribution: TILE_ATTR }
 );
 const tileDark = L.tileLayer(
@@ -70,7 +80,11 @@ const tileDark = L.tileLayer(
   { maxZoom: 19, subdomains: "abcd", attribution: TILE_ATTR }
 );
 
-let mapStyle = localStorage.getItem("fie-map-style") === "dark" ? "dark" : "light";
+// Night is a use case (checking prices from inside a car, at night):
+// with no saved choice, the map follows the system scheme.
+let mapStyle = localStorage.getItem("fie-map-style")
+  || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+if (mapStyle !== "dark") mapStyle = "light";
 (mapStyle === "dark" ? tileDark : tileLight).addTo(map);
 
 const StyleToggle = L.Control.extend({
@@ -79,7 +93,7 @@ const StyleToggle = L.Control.extend({
     const btn = L.DomUtil.create("a", "map-style-btn leaflet-bar");
     btn.href = "#";
     btn.title = "Toggle light/dark map";
-    btn.textContent = "🌓";
+    btn.textContent = "◐";
     L.DomEvent.on(btn, "click", (e) => {
       L.DomEvent.stop(e);
       mapStyle = mapStyle === "dark" ? "light" : "dark";
@@ -131,7 +145,7 @@ function setUserPosition(lat, lng, { accuracy = null, manual = false, fly = fals
     if (!accuracyCircle) {
       accuracyCircle = L.circle([lat, lng], {
         radius: Math.min(accuracy, 800),
-        color: "#2563eb", weight: 1, fillColor: "#2563eb", fillOpacity: 0.07,
+        color: "#15161A", weight: 1, fillColor: "#15161A", fillOpacity: 0.06,
         interactive: false,
       }).addTo(map);
     } else {
@@ -308,8 +322,8 @@ async function loadData() {
   const lastTimes = prices.map((p) => p.last_refresh_timestamp).filter(Boolean).sort();
   setStatus(
     lastTimes.length
-      ? `${stations.length} stations · refreshed ${relTime(lastTimes[lastTimes.length - 1])}`
-      : `${stations.length} stations · press Refresh to run the first investigation`
+      ? `${prices.length.toLocaleString()} prices · ${stations.length} stations · scanned ${relTime(lastTimes[lastTimes.length - 1])}`
+      : `${stations.length} stations · no scan yet — press refresh`
   );
 }
 
@@ -318,8 +332,8 @@ async function refreshPrices() {
   const label = document.getElementById("refresh-label");
   btn.disabled = true;
   btn.classList.add("loading");
-  label.textContent = "Investigating…";
-  setStatus("Running a new investigation — collecting and verifying evidence…");
+  label.textContent = "Scanning…";
+  setStatus("Scanning sources · verifying evidence…");
   try {
     const report = await fetchJSON(`${API}/refresh`, {
       method: "POST",
@@ -381,8 +395,8 @@ const pillPool = new Map(); // station_id -> { marker, key }
 const dotPool = new Map();  // station_id -> { marker, key }
 
 function pillIcon(st, row, cls, isCheapest, isActive) {
-  const priceText = row && row.verified_price != null
-    ? `₱${row.verified_price.toFixed(2)}` : "—";
+  const priceHTML = row && row.verified_price != null
+    ? pesoHTML(row.verified_price) : "—";
   const color = BRAND_COLORS[st.brand] || BRAND_COLORS.unknown;
   const classes = ["pm", cls];
   if (isCheapest) classes.push("cheapest");
@@ -391,8 +405,8 @@ function pillIcon(st, row, cls, isCheapest, isActive) {
     className: "price-marker",
     html:
       `<div class="${classes.join(" ")}">` +
-      `<span class="pm-brand" style="background:${color}">${st.brand[0].toUpperCase()}</span>` +
-      `<span>${priceText}</span></div>`,
+      `<span class="pm-brand" style="background:${color}" title="${st.brand.replace("_", " ")}"></span>` +
+      `<span>${priceHTML}</span></div>`,
     iconSize: null,
   });
 }
@@ -556,12 +570,12 @@ function popupHTML(st) {
     const row = priceRow(st.station_id, id);
     if (!row) return "";
     if (row.verified_price == null) {
-      return `<tr><td>${label}</td><td class="pt-unavail">Price unavailable</td><td></td></tr>`;
+      return `<tr><td>${label}</td><td class="pt-unavail">Unavailable</td><td></td></tr>`;
     }
     const cls = rowClass(row);
     return (
       `<tr><td>${label}</td>` +
-      `<td class="pt-price">₱${row.verified_price.toFixed(2)}/L</td>` +
+      `<td class="pt-price">${pesoHTML(row.verified_price)}/L</td>` +
       `<td>${badgeFor(row, cls, false)}</td></tr>`
     );
   }).join("");
@@ -624,20 +638,20 @@ function renderSidebar() {
     let priceHTML, badgeHTML = "", metaHTML = "";
     if (row && row.verified_price != null) {
       priceHTML =
-        `<span class="card-price">₱${row.verified_price.toFixed(2)}</span>` +
+        `<span class="card-price">${pesoHTML(row.verified_price)}</span>` +
         `<span class="card-fuel">/L ${FUEL_LABELS[state.fuel]}</span>`;
       badgeHTML = badgeFor(row, cls, true);
-      metaHTML = `<div class="card-meta">via ${escapeHTML(row.source_used || "—")} · ${relTime(row.verification_timestamp)}</div>`;
+      metaHTML = `<div class="card-meta">src ${escapeHTML(row.source_used || "—")} · ${relTime(row.verification_timestamp)}</div>`;
     } else {
       priceHTML =
-        `<span class="card-price unavailable">Price unavailable</span>` +
+        `<span class="card-price unavailable">Unavailable</span>` +
         `<span class="card-fuel">${FUEL_LABELS[state.fuel]}</span>`;
     }
 
     card.innerHTML =
-      (isCheapest ? `<span class="cheapest-tag">Cheapest nearby</span>` : "") +
+      (isCheapest ? `<span class="cheapest-tag">Lowest nearby</span>` : "") +
       `<div class="card-top">
-         <span class="brand-chip" style="background:${color}">${st.brand.replace("_", " ")}</span>
+         <span class="brand-chip" style="background:${color}" title="${st.brand.replace("_", " ")}"></span>
          <span class="card-name" title="${escapeHTML(st.official_name)}">${escapeHTML(st.official_name)}</span>
          <span class="card-distance">${dist < 1 ? Math.round(dist * 1000) + " m" : dist.toFixed(1) + " km"}</span>
        </div>
@@ -665,6 +679,35 @@ function setActive(stationId, fly, { popup = false } = {}) {
 function renderAll() {
   renderMarkers();
   renderSidebar();
+  updateIndexStrip();
+}
+
+/* ================= the index strip =================
+ * One cell per fuel: its NCR-wide median verified price. The strip is
+ * also the fuel selector — the index number IS the navigation. */
+
+function medianFor(fuel) {
+  const vals = [];
+  for (const rows of Object.values(state.prices)) {
+    const row = rows[fuel];
+    if (row && row.verified_price != null) vals.push(row.verified_price);
+  }
+  if (!vals.length) return null;
+  vals.sort((a, b) => a - b);
+  const mid = Math.floor(vals.length / 2);
+  return vals.length % 2 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
+}
+
+function updateIndexStrip() {
+  if (!state.dataLoaded) return;
+  for (const { id } of FUELS) {
+    const el = document.getElementById(`cell-value-${id}`);
+    if (!el) continue;
+    const m = medianFor(id);
+    el.innerHTML = m != null
+      ? `${pesoHTML(m)}<span class="cell-unit">/L</span>`
+      : "—";
+  }
 }
 
 /* ================= utilities ================= */
@@ -699,18 +742,21 @@ function setStatus(text) {
 
 /* ================= wiring ================= */
 
-const chipsEl = document.getElementById("fuel-chips");
+const indexEl = document.getElementById("fuel-index");
 for (const { id, label } of FUELS) {
-  const chip = document.createElement("button");
-  chip.className = "chip" + (id === state.fuel ? " selected" : "");
-  chip.textContent = label;
-  chip.addEventListener("click", () => {
+  const cell = document.createElement("button");
+  cell.className = "cell" + (id === state.fuel ? " selected" : "");
+  cell.title = `Median verified ${label} price across NCR — click to map it`;
+  cell.innerHTML =
+    `<span class="cell-label">${label}</span>` +
+    `<span class="cell-value" id="cell-value-${id}">—</span>`;
+  cell.addEventListener("click", () => {
     state.fuel = id;
-    for (const c of chipsEl.children) c.classList.remove("selected");
-    chip.classList.add("selected");
+    for (const c of indexEl.querySelectorAll(".cell")) c.classList.remove("selected");
+    cell.classList.add("selected");
     renderAll();
   });
-  chipsEl.appendChild(chip);
+  indexEl.appendChild(cell);
 }
 
 document.getElementById("refresh-btn").addEventListener("click", refreshPrices);
@@ -728,7 +774,7 @@ map.on("moveend zoomend", () => {
 
 restoreSavedLocation();
 loadData().catch((err) => {
-  setStatus("Could not reach the Fuel Intelligence Engine");
+  setStatus("Board unreachable — retry shortly");
   toast(err.message, true);
 });
 acquireLocation({ fly: true });

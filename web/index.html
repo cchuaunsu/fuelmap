@@ -3,31 +3,40 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Fuel Prices — NCR</title>
+  <title>LITRO — Metro Manila Pump-Price Index</title>
+  <meta name="description" content="Litro is the price authority for the Philippine pump: where to fill up, and whether to do it today. Every figure sourced and timestamped." />
   <meta name="color-scheme" content="light dark" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛽</text></svg>" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='7' fill='%2315161A'/%3E%3Ctext x='50' y='68' font-family='Helvetica,Arial,sans-serif' font-weight='700' font-size='48' letter-spacing='-2' fill='%23FAFAF7' text-anchor='middle'%3E/L%3C/text%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header id="topbar">
-    <div class="title">
-      <span class="logo" aria-hidden="true">⛽</span>
-      <div>
-        <h1>Fuel Prices — NCR</h1>
-        <p id="statusline">Loading stations…</p>
+    <div class="masthead">
+      <div class="lockup">
+        <div class="mark" aria-hidden="true">/L</div>
+        <div>
+          <h1 class="wordmark">LITRO</h1>
+          <p class="tagline">Metro Manila · Pump-Price Index</p>
+        </div>
+      </div>
+      <p id="statusline">LOADING THE BOARD…</p>
+      <div class="controls">
+        <button id="locate-btn" title="Track my location">
+          <span class="locate-dot" aria-hidden="true"></span><span id="locate-label">My location</span>
+        </button>
+        <button id="refresh-btn">
+          <span class="refresh-icon" aria-hidden="true">⟳</span><span id="refresh-label">Refresh</span>
+        </button>
       </div>
     </div>
-    <nav id="fuel-chips" aria-label="Fuel type"></nav>
-    <div class="controls">
-      <button id="locate-btn" title="Track my location">
-        <span class="locate-dot" aria-hidden="true"></span><span id="locate-label">My location</span>
-      </button>
-      <button id="refresh-btn">
-        <span class="refresh-icon" aria-hidden="true">⟳</span><span id="refresh-label">Refresh</span>
-      </button>
-    </div>
+    <nav id="fuel-index" aria-label="The board — select a fuel grade">
+      <div class="index-caption">NCR<br />MEDIAN</div>
+    </nav>
   </header>
 
   <main>
