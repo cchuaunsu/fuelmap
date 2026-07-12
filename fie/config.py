@@ -79,8 +79,14 @@ class Settings:
     # OCR
     min_ocr_confidence: float = _env_float("MIN_OCR_CONFIDENCE", 0.60)
 
-    # Confidence thresholds
-    high_confidence_threshold: float = _env_float("HIGH_CONFIDENCE", 0.70)
+    # Confidence thresholds. HIGH is calibrated to the best evidence this
+    # deployment can produce: an aggregator price inside the current
+    # weekly adjustment cycle, corroborated by the adjustment record,
+    # from a provider with a clean track record scores ~0.73; the same
+    # price without provider history scores ~0.56. Cold-start (first-ever
+    # refresh, no baseline) scores ~0.45 and stays MEDIUM until the next
+    # pass — that is intended.
+    high_confidence_threshold: float = _env_float("HIGH_CONFIDENCE", 0.55)
     medium_confidence_threshold: float = _env_float("MEDIUM_CONFIDENCE", 0.45)
     # Below this score no price is verifiable — "Price unavailable" wins.
     min_verifiable_score: float = _env_float("MIN_VERIFIABLE_SCORE", 0.35)
@@ -98,7 +104,10 @@ class Settings:
     record_challenge_threshold: float = _env_float("RECORD_CHALLENGE_THRESHOLD", 2.00)
     # Population challenge: a price this far (fraction) from its brand's
     # same-fuel median across the region is flagged and cannot score HIGH.
-    population_outlier_fraction: float = _env_float("POPULATION_OUTLIER_FRACTION", 0.10)
+    # Calibrated against observed NCR dispersion: genuine same-brand
+    # prices spread past 10% (RON95 p90 ≈ 12%, premium diesel ≈ 39%), so
+    # the tripwire sits at 25% to catch data corruption, not real pricing.
+    population_outlier_fraction: float = _env_float("POPULATION_OUTLIER_FRACTION", 0.25)
     population_outlier_min_sample: int = _env_int("POPULATION_OUTLIER_MIN_SAMPLE", 5)
 
     # Derivation: when direct evidence is stale, advance the last verified

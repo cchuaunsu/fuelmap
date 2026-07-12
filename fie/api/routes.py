@@ -139,6 +139,7 @@ async def status(request: Request) -> dict:
         "status": "ok",
         "version": __version__,
         "refresh_running": _refresh_lock.locked(),
+        "last_refresh_duration_s": _last_refresh_duration_s,
         **summary,
     }
 
@@ -185,10 +186,16 @@ def list_prices(request: Request) -> list[VerifiedPriceOut]:
 # serialized (one at a time) and rate-limited regardless of who asks.
 _refresh_lock = asyncio.Lock()
 _last_refresh_started: float = 0.0
+_last_refresh_duration_s: float | None = None
+
+
+def _record_refresh_duration(started_monotonic: float) -> None:
+    global _last_refresh_duration_s
+    _last_refresh_duration_s = round(time.monotonic() - started_monotonic, 1)
 
 
 async def bootstrap_store_if_needed(container: EngineContainer) -> None:
-    """Self-heal the store with one refresh, off the startup path.
+    """Self-heal the store with a refresh, off the startup path.
 
     A first deployment (or a wiped database) otherwise serves an empty map
     until a person clicks Refresh and keeps the tab open — and a host that
@@ -201,14 +208,27 @@ async def bootstrap_store_if_needed(container: EngineContainer) -> None:
         reason = _bootstrap_reason(summary, container.settings)
         if reason is None or _refresh_lock.locked():
             return
+        # A first investigation into an empty store has no stored baseline
+        # or provider track record to corroborate against, so its
+        # confidence starts low by design. A second pass right after
+        # scores against the just-stored baseline and reaches steady-state
+        # confidence immediately.
+        passes = 1 if summary["prices_stored"] else 2
         async with _refresh_lock:
-            _last_refresh_started = time.monotonic()
-            log.info("%s — running bootstrap refresh", reason)
-            report = await container.orchestrator.refresh()
-            log.info(
-                "Bootstrap refresh %s done: %d verified",
-                report.run_id, report.stats.get("verified", 0),
-            )
+            for attempt in range(1, passes + 1):
+                if attempt > 1:
+                    await asyncio.sleep(container.settings.refresh_cooldown_s)
+                _last_refresh_started = time.monotonic()
+                log.info(
+                    "%s — running bootstrap refresh (pass %d/%d)",
+                    reason, attempt, passes,
+                )
+                report = await container.orchestrator.refresh()
+                _record_refresh_duration(_last_refresh_started)
+                log.info(
+                    "Bootstrap refresh %s done: %d verified",
+                    report.run_id, report.stats.get("verified", 0),
+                )
     except Exception:
         log.exception("Bootstrap refresh failed; serving whatever the "
                       "store already holds")
@@ -264,6 +284,7 @@ async def refresh(body: RefreshRequest, request: Request) -> RefreshResponse:
             station_ids=body.station_ids,
             developer_mode=body.developer_mode,
         )
+        _record_refresh_duration(_last_refresh_started)
     return RefreshResponse(
         run_id=report.run_id,
         started_at=report.started_at,

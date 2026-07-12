@@ -240,6 +240,24 @@ class VerifiedPriceStore:
         self._database_url = database_url
         self._pg = bool(database_url)
         self._lock = threading.Lock()
+        self._pool = None
+        if self._pg:
+            from psycopg.rows import dict_row
+            from psycopg_pool import ConnectionPool
+
+            # A remote Postgres charges a TLS handshake (~0.5s) per fresh
+            # connection; pooling pays it once per pooled slot instead of
+            # on every store call. check= revalidates a checked-out
+            # connection so ones killed by the server's idle suspend
+            # (e.g. Neon free tier) are replaced transparently.
+            self._pool = ConnectionPool(
+                database_url,
+                min_size=0,
+                max_size=4,
+                open=True,
+                check=ConnectionPool.check_connection,
+                kwargs={"row_factory": dict_row},
+            )
         schema = _POSTGRES_SCHEMA if self._pg else _SQLITE_SCHEMA
         with self._lock, self._connect() as conn:
             if self._pg:
@@ -255,10 +273,9 @@ class VerifiedPriceStore:
 
     def _connect(self):
         if self._pg:
-            import psycopg
-            from psycopg.rows import dict_row
-
-            return psycopg.connect(self._database_url, row_factory=dict_row)
+            # Context manager: commits and returns the connection to the
+            # pool on exit — same semantics `with psycopg.connect()` had.
+            return self._pool.connection()
         conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")

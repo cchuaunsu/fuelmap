@@ -76,11 +76,14 @@ class VerificationEngine:
         # used to challenge station prices that stand far outside their
         # own brand's pricing.
         medians = self._brand_medians(admitted_by_key)
+        price_modes = self._brand_price_modes(admitted_by_key)
 
         for (station_id, fuel_type), items in grouped.items():
             admitted = admitted_by_key[(station_id, fuel_type)]
             clusters = self._cluster(admitted)
-            self._flag_population_outliers(clusters, fuel_type, medians)
+            self._flag_population_outliers(
+                clusters, fuel_type, medians, price_modes
+            )
             result.assessments[(station_id, fuel_type)] = StationFuelAssessment(
                 station_id=station_id,
                 fuel_type=fuel_type,
@@ -171,26 +174,52 @@ class VerificationEngine:
             if len(values) >= self._settings.population_outlier_min_sample
         }
 
+    def _brand_price_modes(
+        self,
+        admitted_by_key: dict[tuple[str, FuelType], list[NormalizedEvidence]],
+    ) -> dict[tuple[str, FuelType, float], int]:
+        """How many distinct stations share each exact (brand, fuel, price)."""
+        stations: dict[tuple[str, FuelType, float], set] = {}
+        for (station_id, fuel_type), items in admitted_by_key.items():
+            for item in items:
+                key = (item.brand.value, fuel_type, round(item.price, 2))
+                stations.setdefault(key, set()).add(station_id)
+        return {key: len(ids) for key, ids in stations.items()}
+
     def _flag_population_outliers(
         self,
         clusters: list[EvidenceCluster],
         fuel_type: FuelType,
         medians: dict[tuple[str, FuelType], float],
+        price_modes: dict[tuple[str, FuelType, float], int],
     ) -> None:
         """Challenge prices standing far outside their brand's own pricing.
 
         The price is not altered or rejected — stations do reprice — but a
         claim >N% away from every same-brand station in the region cannot
         carry HIGH confidence on a single witness.
+
+        Exception: an identical price shared by many same-brand stations
+        is a published price point (brands price premium products
+        uniformly, which makes some fuels bimodal), not a data defect.
+        Only a price that is both far from the brand median AND rare
+        stays flagged — a typo is unique; a price list repeats.
         """
         fraction = self._settings.population_outlier_fraction
+        min_sample = self._settings.population_outlier_min_sample
         for cluster in clusters:
             brand = cluster.members[0].brand.value
             benchmark = medians.get((brand, fuel_type))
             if benchmark is None or benchmark <= 0:
                 continue
-            if abs(cluster.price - benchmark) / benchmark > fraction:
-                cluster.flags.append("population_outlier")
+            if abs(cluster.price - benchmark) / benchmark <= fraction:
+                continue
+            shared_by = price_modes.get(
+                (brand, fuel_type, round(cluster.price, 2)), 0
+            )
+            if shared_by >= min_sample:
+                continue
+            cluster.flags.append("population_outlier")
 
     def _cluster(
         self, items: list[NormalizedEvidence]

@@ -113,7 +113,13 @@ class RefreshOrchestrator:
         with ctx.trace.stage("discovery"):
             candidates = await self._discovery.discover(stations, ctx)
 
-        # 2. Collection — every provider is an independent witness.
+        # 2. Collection — every provider is an independent witness. The
+        # adjustment-ledger feeds fetch concurrently with it; their
+        # results are awaited and recorded right after.
+        adjustment_tasks = [
+            asyncio.create_task(provider.fetch_adjustments(ctx))
+            for provider in self._adjustment_providers
+        ]
         with ctx.trace.stage("collection"):
             collection = await self._collector.collect(candidates, ctx)
 
@@ -121,9 +127,11 @@ class RefreshOrchestrator:
         # adjustments (fuels the Derivation Engine when evidence is stale).
         adjustments_recorded = 0
         with ctx.trace.stage("adjustments"):
-            for provider in self._adjustment_providers:
+            for provider, task in zip(
+                self._adjustment_providers, adjustment_tasks
+            ):
                 try:
-                    found = await provider.fetch_adjustments(ctx)
+                    found = await task
                     adjustments_recorded += await asyncio.to_thread(
                         self._store.record_adjustments, found
                     )
@@ -244,6 +252,14 @@ class RefreshOrchestrator:
             "rejected, %d provider errors",
             ctx.run_id, verified_count, len(results) - verified_count,
             len(rejections), len(collection.errors),
+        )
+        log.info(
+            "Refresh %s stage timings (ms): %s",
+            ctx.run_id,
+            " ".join(
+                f"{name}={ms:.0f}"
+                for name, ms in ctx.trace.stage_durations_ms.items()
+            ),
         )
         return report
 

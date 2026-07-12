@@ -9,4 +9,4 @@ The engine never guesses: if the evidence cannot support a verified price,
 the answer is "Price unavailable".
 """
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"

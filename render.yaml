@@ -23,3 +23,8 @@ services:
         sync: false
       - key: FIE_REFRESH_COOLDOWN_S
         value: "15"
+      # On wake, refresh in the background when stored data is older
+      # than this many hours - visitors get current prices without
+      # pressing Refresh, and the sleeping free plan stays fresh.
+      - key: FIE_BOOTSTRAP_MAX_AGE_H
+        value: "1"
