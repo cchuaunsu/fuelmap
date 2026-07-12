@@ -10,15 +10,15 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from fie import __version__
-from fie.api.routes import bootstrap_store_if_empty, router
+from fie.api.routes import bootstrap_store_if_needed, router
 from fie.container import EngineContainer, build_container
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    # Populate an empty store in the background; startup (and /health)
-    # must not wait on it.
-    task = asyncio.create_task(bootstrap_store_if_empty(app.state.container))
+    # Populate an empty/stale store in the background; startup (and
+    # /health) must not wait on it.
+    task = asyncio.create_task(bootstrap_store_if_needed(app.state.container))
     yield
     task.cancel()
 

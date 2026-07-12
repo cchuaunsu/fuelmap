@@ -115,6 +115,12 @@ class Settings:
     # gate on, this is only a double-tap guard for the sources.
     refresh_cooldown_s: float = _env_float("REFRESH_COOLDOWN_S", 15.0)
 
+    # On startup, refresh automatically when the store is empty or its
+    # data is older than this (hours). Keeps a host that sleeps between
+    # visits serving current prices. 0 disables the staleness trigger
+    # (an empty store always bootstraps).
+    bootstrap_max_age_h: float = _env_float("BOOTSTRAP_MAX_AGE_H", 6.0)
+
     # When set, the entire site (pages + API) requires this password.
     access_password: str = _env("ACCESS_PASSWORD", "")
 

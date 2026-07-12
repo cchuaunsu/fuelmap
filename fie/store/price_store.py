@@ -191,9 +191,10 @@ _UPSERT_RELIABILITY = """
         errors, updated_at
     ) VALUES (?, ?, ?, ?, ?)
     ON CONFLICT (provider_name) DO UPDATE SET
-        agreements = agreements + excluded.agreements,
-        disagreements = disagreements + excluded.disagreements,
-        errors = errors + excluded.errors,
+        agreements = provider_reliability.agreements + excluded.agreements,
+        disagreements = provider_reliability.disagreements
+            + excluded.disagreements,
+        errors = provider_reliability.errors + excluded.errors,
         updated_at = excluded.updated_at
 """
 

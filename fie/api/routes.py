@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -186,29 +187,46 @@ _refresh_lock = asyncio.Lock()
 _last_refresh_started: float = 0.0
 
 
-async def bootstrap_store_if_empty(container: EngineContainer) -> None:
-    """Self-heal an empty store with one refresh, off the startup path.
+async def bootstrap_store_if_needed(container: EngineContainer) -> None:
+    """Self-heal the store with one refresh, off the startup path.
 
     A first deployment (or a wiped database) otherwise serves an empty map
-    until a person clicks Refresh and keeps the tab open. Uses the same
-    lock and cooldown stamp as the endpoint so the two can never overlap.
+    until a person clicks Refresh and keeps the tab open — and a host that
+    sleeps between visits wakes up serving old prices. Uses the same lock
+    and cooldown stamp as the endpoint so the two can never overlap.
     """
     global _last_refresh_started
     try:
         summary = await asyncio.to_thread(container.store.summary)
-        if summary["prices_stored"] or _refresh_lock.locked():
+        reason = _bootstrap_reason(summary, container.settings)
+        if reason is None or _refresh_lock.locked():
             return
         async with _refresh_lock:
             _last_refresh_started = time.monotonic()
-            log.info("Store is empty — running bootstrap refresh")
+            log.info("%s — running bootstrap refresh", reason)
             report = await container.orchestrator.refresh()
             log.info(
                 "Bootstrap refresh %s done: %d verified",
                 report.run_id, report.stats.get("verified", 0),
             )
     except Exception:
-        log.exception("Bootstrap refresh failed; the map stays empty "
-                      "until a manual refresh succeeds")
+        log.exception("Bootstrap refresh failed; serving whatever the "
+                      "store already holds")
+
+
+def _bootstrap_reason(summary: dict, settings) -> str | None:
+    if not summary["prices_stored"]:
+        return "Store is empty"
+    max_age_h = settings.bootstrap_max_age_h
+    if not max_age_h or not summary["last_refresh"]:
+        return None
+    age_h = (
+        datetime.now(timezone.utc)
+        - datetime.fromisoformat(summary["last_refresh"])
+    ).total_seconds() / 3600.0
+    if age_h > max_age_h:
+        return f"Store data is {age_h:.1f}h old (limit {max_age_h:g}h)"
+    return None
 
 
 @router.post("/refresh", response_model=RefreshResponse)

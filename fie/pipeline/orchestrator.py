@@ -200,9 +200,15 @@ class RefreshOrchestrator:
                     self._derivation.derive_stale, ctx
                 )
 
-        await asyncio.to_thread(
-            self._update_provider_reliability, matching.matched, results, collection
-        )
+        # Reliability tracking is bookkeeping: by now the verified prices
+        # are committed, so a failure here must not fail the refresh.
+        try:
+            await asyncio.to_thread(
+                self._update_provider_reliability,
+                matching.matched, results, collection,
+            )
+        except Exception:
+            log.exception("Provider reliability update failed; continuing")
 
         finished_at = datetime.now(timezone.utc)
         verified_count = sum(
