@@ -1,0 +1,25 @@
+# Render blueprint — deploys the Fuel Intelligence Engine + map frontend
+# as one password-protected web service on the free plan.
+#
+# At deploy time Render asks you to fill in the two secret values:
+# - FIE_ACCESS_PASSWORD: the password the site asks for (you choose it)
+# - FIE_DATABASE_URL: connection string of a free Neon Postgres database
+#   (neon.tech) so price history and the adjustment ledger persist across
+#   restarts. Leave empty to run on ephemeral SQLite instead.
+#
+# Free-plan notes:
+# - The service sleeps after ~15 min idle; the first visit wakes it
+#   (roughly a minute), after which it is instant.
+services:
+  - type: web
+    name: fuel-prices-ncr
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: FIE_ACCESS_PASSWORD
+        sync: false
+      - key: FIE_DATABASE_URL
+        sync: false
+      - key: FIE_REFRESH_COOLDOWN_S
+        value: "15"

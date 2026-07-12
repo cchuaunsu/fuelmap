@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+fie.db
+fie.db-*
+*.log
+.DS_Store
+
+# Local Claude Code config
+.claude/

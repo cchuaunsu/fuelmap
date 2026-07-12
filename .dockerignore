@@ -1,0 +1,10 @@
+.venv
+.git
+.claude
+__pycache__
+*.pyc
+fie.db
+fie.db-wal
+fie.db-shm
+scripts
+README.md

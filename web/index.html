@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Fuel Prices — NCR</title>
+  <meta name="color-scheme" content="light dark" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛽</text></svg>" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header id="topbar">
+    <div class="title">
+      <span class="logo" aria-hidden="true">⛽</span>
+      <div>
+        <h1>Fuel Prices — NCR</h1>
+        <p id="statusline">Loading stations…</p>
+      </div>
+    </div>
+    <nav id="fuel-chips" aria-label="Fuel type"></nav>
+    <div class="controls">
+      <button id="locate-btn" title="Track my location">
+        <span class="locate-dot" aria-hidden="true"></span><span id="locate-label">My location</span>
+      </button>
+      <button id="refresh-btn">
+        <span class="refresh-icon" aria-hidden="true">⟳</span><span id="refresh-label">Refresh</span>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <aside id="sidebar">
+      <div class="sidebar-head">
+        <h2>Nearest stations</h2>
+        <span id="station-count"></span>
+      </div>
+      <div id="station-list" class="loading">
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+      </div>
+    </aside>
+    <div id="map-wrap">
+      <div id="map"></div>
+      <div id="map-banner" hidden>
+        <span id="map-banner-text"></span>
+        <button id="map-banner-close" aria-label="Dismiss">✕</button>
+      </div>
+    </div>
+  </main>
+
+  <div id="toast" hidden></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="app.js"></script>
+</body>
+</html>

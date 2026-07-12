@@ -1,0 +1,142 @@
+{
+ "_comment": "Curated registry of known public sources. aggregator_pages carry per-station datasets. company_pages are official brand-wide sources. stations ties URLs to one canonical station. Adding a source is a data change, not a code change.",
+ "aggregator_pages": [
+  {
+   "name": "GasWatch PH — Quezon City",
+   "url": "https://gaswatchph.com/quezon-city",
+   "city": "Quezon City"
+  },
+  {
+   "name": "GasWatch PH — Manila",
+   "url": "https://gaswatchph.com/manila",
+   "city": "Manila"
+  },
+  {
+   "name": "GasWatch PH — Caloocan",
+   "url": "https://gaswatchph.com/caloocan",
+   "city": "Caloocan"
+  },
+  {
+   "name": "GasWatch PH — Makati",
+   "url": "https://gaswatchph.com/makati",
+   "city": "Makati"
+  },
+  {
+   "name": "GasWatch PH — Pasig",
+   "url": "https://gaswatchph.com/pasig",
+   "city": "Pasig"
+  },
+  {
+   "name": "GasWatch PH — Taguig",
+   "url": "https://gaswatchph.com/taguig",
+   "city": "Taguig"
+  },
+  {
+   "name": "GasWatch PH — Parañaque",
+   "url": "https://gaswatchph.com/paranaque",
+   "city": "Parañaque"
+  },
+  {
+   "name": "GasWatch PH — Las Piñas",
+   "url": "https://gaswatchph.com/las-pinas",
+   "city": "Las Piñas"
+  },
+  {
+   "name": "GasWatch PH — Valenzuela",
+   "url": "https://gaswatchph.com/valenzuela",
+   "city": "Valenzuela"
+  },
+  {
+   "name": "GasWatch PH — Marikina",
+   "url": "https://gaswatchph.com/marikina",
+   "city": "Marikina"
+  },
+  {
+   "name": "GasWatch PH — San Juan",
+   "url": "https://gaswatchph.com/san-juan",
+   "city": "San Juan"
+  },
+  {
+   "name": "GasWatch PH — Mandaluyong",
+   "url": "https://gaswatchph.com/mandaluyong",
+   "city": "Mandaluyong"
+  },
+  {
+   "name": "GasWatch PH — Muntinlupa",
+   "url": "https://gaswatchph.com/muntinlupa",
+   "city": "Muntinlupa"
+  },
+  {
+   "name": "GasWatch PH — Malabon",
+   "url": "https://gaswatchph.com/malabon",
+   "city": "Malabon"
+  },
+  {
+   "name": "GasWatch PH — Pasay",
+   "url": "https://gaswatchph.com/pasay",
+   "city": "Pasay"
+  },
+  {
+   "name": "GasWatch PH — Navotas",
+   "url": "https://gaswatchph.com/navotas",
+   "city": "Navotas"
+  },
+  {
+   "name": "GasWatch PH — Pateros",
+   "url": "https://gaswatchph.com/pateros",
+   "city": "Pateros"
+  }
+ ],
+ "brands": {
+  "unioil": {
+   "company_pages": [
+    {
+     "name": "Unioil — Fuel Prices",
+     "url": "https://www.unioil.com/",
+     "source_type": "official_company",
+     "region": [
+      "metro manila"
+     ]
+    }
+   ]
+  },
+  "cleanfuel": {
+   "company_pages": [
+    {
+     "name": "Cleanfuel Philippines",
+     "url": "https://cleanfuel.ph/",
+     "source_type": "official_company",
+     "region": [
+      "metro manila"
+     ]
+    }
+   ]
+  },
+  "seaoil": {
+   "company_pages": [
+    {
+     "name": "Seaoil Philippines",
+     "url": "https://seaoil.com.ph/",
+     "source_type": "official_company",
+     "region": [
+      "metro manila"
+     ]
+    }
+   ]
+  },
+  "phoenix": {
+   "company_pages": [
+    {
+     "name": "Phoenix Fuels",
+     "url": "https://phoenixfuels.ph/",
+     "source_type": "official_company",
+     "region": [
+      "metro manila"
+     ]
+    }
+   ]
+  }
+ },
+ "stations": {},
+ "business_listings": []
+}
